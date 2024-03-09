@@ -1,0 +1,9 @@
+    let server_ca_file_loc = ".certs/ca.crt";
+    let mut buf = Vec::new();
+    File::open(server_ca_file_loc)
+        .await
+        .unwrap()
+        .read_to_end(&mut buf)
+        .await
+        .unwrap();
+

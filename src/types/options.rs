@@ -140,6 +140,50 @@ impl From<Certificate> for native_tls::Certificate {
     }
 }
 
+#[cfg(feature = "tls")]
+#[derive(Clone)]
+pub struct Identity(Arc<native_tls::Identity>);
+
+#[cfg(feature = "tls")]
+impl fmt::Debug for Identity {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[Identity]")
+    }
+}
+
+#[cfg(feature = "tls")]
+impl PartialEq for Identity {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+#[cfg(feature = "tls")]
+impl Identity {
+    pub fn from_pkcs12(der: &[u8], pass: &str) -> Result<Identity> {
+        let inner = match native_tls::Identity::from_pkcs12(der, pass) {
+            Ok(identity) => identity,
+            Err(err) => return Err(Error::Other(err.to_string().into())),
+        };
+        Ok(Identity(Arc::new(inner)))
+    }
+
+    pub fn from_pkcs8(pem: &[u8], key: &[u8]) -> Result<Identity> {
+        let inner = match native_tls::Identity::from_pkcs8(pem, key.into()) {
+            Ok(identity) => identity,
+            Err(err) => return Err(Error::Other(err.to_string().into())),
+        };
+        Ok(Identity(Arc::new(inner)))
+    }
+}
+
+#[cfg(feature = "tls")]
+impl From<Identity> for native_tls::Identity {
+    fn from(value: Identity) -> Self {
+        value.0.as_ref().clone()
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum SettingType {
     String(String),
@@ -265,6 +309,10 @@ pub struct Options {
     #[cfg(feature = "tls")]
     pub(crate) certificate: Option<Certificate>,
 
+    /// TLS client identity.
+    #[cfg(feature = "tls")]
+    pub(crate) identity: Option<Identity>,
+
     /// Query settings
     pub(crate) settings: HashMap<String, SettingValue>,
 
@@ -319,6 +367,8 @@ impl Default for Options {
             skip_verify: false,
             #[cfg(feature = "tls")]
             certificate: None,
+            #[cfg(feature = "tls")]
+            identity: None,
             settings: HashMap::new(),
             alt_hosts: Vec::new(),
         }
@@ -471,6 +521,12 @@ impl Options {
     property! {
         /// An X509 certificate.
         => certificate: Option<Certificate>
+    }
+
+    #[cfg(feature = "tls")]
+    property! {
+        /// TLS client identity.
+        => identity: Option<Identity>
     }
 
     property! {

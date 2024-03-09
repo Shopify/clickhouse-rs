@@ -171,6 +171,10 @@ impl ConnectingStream {
                     let native_cert = native_tls::Certificate::from(certificate);
                     builder.add_root_certificate(native_cert);
                 }
+                if let Some(identity) = options.identity.clone() {
+                    let native_identity = native_tls::Identity::from(identity);
+                    builder.identity(native_identity);
+                }
 
                 Self {
                     state: State::tls_wait(Box::pin(async move {
