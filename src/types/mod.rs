@@ -22,6 +22,9 @@ pub use self::{
     value_ref::ValueRef,
 };
 
+#[cfg(feature = "tls")]
+pub use self::options::{Certificate, Identity};
+
 pub(crate) use self::{
     cmd::Cmd,
     date_converter::DateConverter,
