@@ -324,7 +324,12 @@ impl ClientHandle {
         }
 
         self.inner = h;
-        self.context.server_info = info.unwrap();
+        match info {
+            None => return Err(Error::Connection(ConnectionError::Broken)),
+            Some(info) => {
+                self.context.server_info = info;
+            }
+        }
         Ok(())
     }
 
