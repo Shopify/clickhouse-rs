@@ -106,7 +106,7 @@ pub struct Pool {
 }
 
 #[derive(Debug)]
-struct PoolInfo {
+pub struct PoolInfo {
     new_len: usize,
     idle_len: usize,
     tasks_len: usize,
@@ -175,7 +175,7 @@ impl Pool {
         }
     }
 
-    fn info(&self) -> PoolInfo {
+    pub fn info(&self) -> PoolInfo {
         PoolInfo {
             new_len: self.inner.new.len(),
             idle_len: self.inner.idle.len(),
