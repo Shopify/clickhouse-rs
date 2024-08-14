@@ -113,6 +113,24 @@ pub struct PoolInfo {
     ongoing: usize,
 }
 
+impl PoolInfo {
+    pub fn get_new_len(&self) -> usize {
+        return self.new_len
+    }
+
+    pub fn get_idle_len(&self) -> usize {
+        return self.idle_len
+    }
+
+    pub fn get_tasks_len(&self) -> usize {
+        return self.tasks_len
+    }
+
+    pub fn get_ongoing(&self) -> usize {
+        return self.ongoing
+    }
+}
+
 impl fmt::Debug for Pool {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let info = self.info();
