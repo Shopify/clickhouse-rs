@@ -20,7 +20,6 @@ use crate::{
     binary::Parser,
     errors::{DriverError, Error, Result},
     io::{read_to_end::read_to_end, Stream as InnerStream},
-    pool::{Inner, Pool},
     types::{Block, Cmd, Packet},
 };
 use futures_core::Stream;
@@ -55,7 +54,6 @@ pub(crate) struct ClickhouseTransport {
     info: TransportInfo,
     // Whether there are unread packets
     pub(crate) inconsistent: bool,
-    status: Arc<TransportStatus>,
 }
 
 enum PacketStreamState {
@@ -65,11 +63,6 @@ enum PacketStreamState {
     Done,
 }
 
-pub(crate) struct TransportStatus {
-    inside: AtomicBool,
-    pool: sync::Weak<Inner>,
-}
-
 pub(crate) struct PacketStream {
     inner: Option<ClickhouseTransport>,
     state: PacketStreamState,
@@ -77,7 +70,7 @@ pub(crate) struct PacketStream {
 }
 
 impl ClickhouseTransport {
-    pub fn new(inner: InnerStream, compress: bool, pool: Option<Pool>) -> Self {
+    pub fn new(inner: InnerStream, compress: bool) -> Self {
         ClickhouseTransport {
             inner,
             done: false,
@@ -91,12 +84,7 @@ impl ClickhouseTransport {
                 compress,
             },
             inconsistent: false,
-            status: Arc::new(TransportStatus::new(pool)),
         }
-    }
-
-    pub(crate) fn set_inside(&self, value: bool) {
-        self.status.inside.store(value, Ordering::Release);
     }
 
     pub(crate) async fn clear(self) -> Result<Self> {
@@ -122,34 +110,6 @@ impl ClickhouseTransport {
         let mut transport = h.ok_or(Error::Driver(DriverError::UnexpectedPacket))?;
         transport.inconsistent = false;
         Ok(transport)
-    }
-}
-
-impl Drop for TransportStatus {
-    fn drop(&mut self) {
-        let inside = self.inside.load(Ordering::Acquire);
-
-        if inside {
-            return;
-        }
-
-        if let Some(pool_inner) = self.pool.upgrade() {
-            pool_inner.release_conn();
-        }
-    }
-}
-
-impl TransportStatus {
-    fn new(pool: Option<Pool>) -> TransportStatus {
-        let pool = match pool {
-            None => sync::Weak::new(),
-            Some(p) => Arc::downgrade(&p.inner),
-        };
-
-        TransportStatus {
-            inside: AtomicBool::new(true),
-            pool,
-        }
     }
 }
 

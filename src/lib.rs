@@ -119,7 +119,6 @@ use crate::{
     connecting_stream::ConnectingStream,
     errors::{DriverError, Error, Result},
     io::ClickhouseTransport,
-    pool::PoolBinding,
     retry_guard::retry_guard,
     types::{
         block::{ChunkIterator, INSERT_BLOCK_SIZE},
@@ -129,7 +128,6 @@ use crate::{
 };
 pub use crate::{
     errors::ConnectionError,
-    pool::Pool,
     types::{block::Block, Options, Simple},
 };
 
@@ -139,8 +137,6 @@ mod connecting_stream;
 /// Error types.
 pub mod errors;
 mod io;
-/// Pool types.
-pub mod pool;
 mod retry_guard;
 /// Clickhouse types.
 pub mod types;
@@ -239,7 +235,6 @@ pub struct Client {
 pub struct ClientHandle {
     inner: Option<ClickhouseTransport>,
     context: Context,
-    pool: PoolBinding,
 }
 
 impl fmt::Debug for ClientHandle {
@@ -251,13 +246,12 @@ impl fmt::Debug for ClientHandle {
 }
 
 impl Client {
-    #[deprecated(since = "0.1.4", note = "please use Pool to connect")]
     pub async fn connect(options: Options) -> Result<ClientHandle> {
         let source = options.into_options_src();
-        Self::open(source, None).await
+        Self::open(source).await
     }
 
-    pub(crate) async fn open(source: OptionsSource, pool: Option<Pool>) -> Result<ClientHandle> {
+    pub(crate) async fn open(source: OptionsSource) -> Result<ClientHandle> {
         let options = try_opt!(source.get());
         let compress = options.compression;
         let timeout = options.connection_timeout;
@@ -269,10 +263,7 @@ impl Client {
 
         with_timeout(
             async move {
-                let addr = match &pool {
-                    None => &options.addr,
-                    Some(p) => p.get_addr(),
-                };
+                let addr = &options.addr;
 
                 info!("try to connect to {}", addr);
                 if addr.port() == Some(8123) {
@@ -282,14 +273,10 @@ impl Client {
                 stream.set_nodelay(options.nodelay)?;
                 stream.set_keepalive(options.keepalive)?;
 
-                let transport = ClickhouseTransport::new(stream, compress, pool.clone());
+                let transport = ClickhouseTransport::new(stream, compress);
                 let mut handle = ClientHandle {
                     inner: Some(transport),
                     context,
-                    pool: match pool {
-                        None => PoolBinding::None,
-                        Some(p) => PoolBinding::Detached(p),
-                    },
                 };
 
                 handle.hello().await?;
@@ -538,11 +525,11 @@ impl ClientHandle {
         R: Future<Output = Result<T>>,
         T: 'static,
     {
-        let ping_before_query = try_opt!(self.context.options.get()).ping_before_query;
+        // let ping_before_query = try_opt!(self.context.options.get()).ping_before_query;
 
-        if ping_before_query {
-            self.check_connection().await?;
-        }
+        // if ping_before_query {
+        //     self.check_connection().await?;
+        // }
         f(self).await
     }
 
@@ -550,59 +537,30 @@ impl ClientHandle {
     where
         F: (FnOnce(&'a mut Self) -> Result<BlockStream<'a>>) + Send + 'static,
     {
-        let ping_before_query = match self.context.options.get() {
-            Ok(val) => val.ping_before_query,
-            Err(err) => return Box::pin(stream::once(future::err(err))),
-        };
+        // let ping_before_query = match self.context.options.get() {
+        //     Ok(val) => val.ping_before_query,
+        //     Err(err) => return Box::pin(stream::once(future::err(err))),
+        // };
 
-        if ping_before_query {
-            let fut: BoxFuture<'a, BoxStream<'a, Result<Block>>> = Box::pin(async move {
-                let inner: BoxStream<'a, Result<Block>> = match self.check_connection().await {
-                    Ok(_) => match f(self) {
-                        Ok(s) => Box::pin(s),
-                        Err(err) => Box::pin(stream::once(future::err(err))),
-                    },
-                    Err(err) => Box::pin(stream::once(future::err(err))),
-                };
-                inner
-            });
+        // if ping_before_query {
+        //     let fut: BoxFuture<'a, BoxStream<'a, Result<Block>>> = Box::pin(async move {
+        //         let inner: BoxStream<'a, Result<Block>> = match self.check_connection().await {
+        //             Ok(_) => match f(self) {
+        //                 Ok(s) => Box::pin(s),
+        //                 Err(err) => Box::pin(stream::once(future::err(err))),
+        //             },
+        //             Err(err) => Box::pin(stream::once(future::err(err))),
+        //         };
+        //         inner
+        //     });
 
-            Box::pin(fut.flatten_stream())
-        } else {
+        //     Box::pin(fut.flatten_stream())
+        // } else {
             match f(self) {
                 Ok(s) => Box::pin(s),
                 Err(err) => Box::pin(stream::once(future::err(err))),
             }
-        }
-    }
-
-    /// Check connection and try to reconnect if necessary.
-    pub async fn check_connection(&mut self) -> Result<()> {
-        self.pool.detach();
-
-        let source = self.context.options.clone();
-        let pool = self.pool.clone();
-
-        let (send_retries, retry_timeout) = {
-            let options = try_opt!(source.get());
-            (options.send_retries, options.retry_timeout)
-        };
-
-        retry_guard(self, &source, pool.into(), send_retries, retry_timeout).await?;
-
-        if !self.pool.is_attached() && self.pool.is_some() {
-            self.pool.attach();
-        }
-
-        Ok(())
-    }
-
-    pub(crate) fn set_inside(&self, value: bool) {
-        if let Some(ref inner) = self.inner {
-            inner.set_inside(value);
-        } else {
-            unreachable!()
-        }
+        // }
     }
 
     fn get_inner(&mut self) -> Result<ClickhouseTransport> {
