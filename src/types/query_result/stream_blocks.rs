@@ -37,10 +37,6 @@ impl<'a> Drop for BlockStream<'a> {
     fn drop(&mut self) {
         match self.state {
             BlockStreamState::Reading => {
-                if !self.client.pool.is_attached() {
-                    self.client.pool.attach();
-                }
-
                 if let Some(mut transport) = self.inner.take_transport() {
                     transport.inconsistent = true;
                     self.client.inner = Some(transport);
@@ -100,9 +96,6 @@ impl<'a> Stream for BlockStream<'a> {
             match packet {
                 Packet::Eof(inner) => {
                     self.client.inner = Some(inner);
-                    if !self.client.pool.is_attached() {
-                        self.client.pool.attach();
-                    }
                     self.state = BlockStreamState::Finished;
                 }
                 Packet::ProfileInfo(_) | Packet::Progress(_) => {}

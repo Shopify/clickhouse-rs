@@ -1,6 +1,7 @@
-use clickhouse_rs::{row, types::Block, Pool};
+use clickhouse_rs::{row, types::Block, Client, Options};
 use futures_util::StreamExt;
 use std::{env, error::Error};
+use url::Url;
 
 async fn execute(database_url: String) -> Result<(), Box<dyn Error>> {
     env::set_var("RUST_LOG", "clickhouse_rs=debug");
@@ -20,9 +21,14 @@ async fn execute(database_url: String) -> Result<(), Box<dyn Error>> {
     block.push(row! { customer_id: 7_u32, amount:  8_u32, account_name: None::<&str> })?;
     block.push(row! { customer_id: 9_u32, amount: 10_u32, account_name: Some("bar") })?;
 
-    let pool = Pool::new(database_url);
+    let parsed_url = match Url::parse(&database_url) {
+        Ok(url) => url,
+        Err(e) => panic!("Failed to parse ClickHouse URL: {}", e),
+    };
 
-    let mut client = pool.get_handle().await?;
+    let options = Options::new(parsed_url);
+
+    let mut client = Client::connect(options).await?;
     client.execute(ddl).await?;
     client.insert("payment", block).await?;
     let mut stream = client.query("SELECT * FROM payment").stream();
