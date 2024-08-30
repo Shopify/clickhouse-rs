@@ -111,7 +111,7 @@
 use std::{fmt, future::Future, time::Duration};
 
 use futures_util::{
-    future, future::BoxFuture, future::FutureExt, stream, stream::BoxStream, StreamExt,
+    future, stream, stream::BoxStream, StreamExt,
 };
 use log::{info, warn};
 
@@ -119,7 +119,6 @@ use crate::{
     connecting_stream::ConnectingStream,
     errors::{DriverError, Error, Result},
     io::ClickhouseTransport,
-    retry_guard::retry_guard,
     types::{
         block::{ChunkIterator, INSERT_BLOCK_SIZE},
         query_result::stream_blocks::BlockStream,

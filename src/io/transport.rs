@@ -3,11 +3,6 @@ use std::{
     io::{self, Cursor},
     pin::Pin,
     ptr,
-    sync::{
-        self,
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
     task::{self, Poll},
 };
 
