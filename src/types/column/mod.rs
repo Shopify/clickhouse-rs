@@ -32,11 +32,13 @@ pub(crate) use self::{column_data::ColumnData, string_pool::StringPool};
 pub use self::{concat::ConcatColumnData, numeric::VectorColumnData};
 
 mod array;
+mod bigint;
 pub(crate) mod chrono_datetime;
 mod chunk;
 mod column_data;
 mod concat;
 mod date;
+mod date32;
 pub(crate) mod datetime64;
 mod decimal;
 mod enums;
@@ -53,6 +55,7 @@ mod numeric;
 mod simple_agg_func;
 mod string;
 mod string_pool;
+mod tuple;
 mod util;
 
 /// Represents Clickhouse Column

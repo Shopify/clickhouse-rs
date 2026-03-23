@@ -340,6 +340,10 @@ pub enum SqlType {
     SimpleAggregateFunction(SimpleAggFunc, &'static SqlType),
     Map(&'static SqlType, &'static SqlType),
     Nothing,
+    Int256,
+    UInt256,
+    Date32,
+    Tuple(Vec<&'static SqlType>),
 }
 
 lazy_static! {
@@ -446,6 +450,14 @@ impl SqlType {
             }
             SqlType::Map(k, v) => format!("Map({}, {})", &k, &v).into(),
             SqlType::Nothing => "Nothing".into(),
+            SqlType::Int256 => "Int256".into(),
+            SqlType::UInt256 => "UInt256".into(),
+            SqlType::Date32 => "Date32".into(),
+            SqlType::Tuple(ref types) => {
+                let inner: Vec<std::borrow::Cow<'static, str>> = types.iter().map(|t| SqlType::to_string(t)).collect();
+                let strs: Vec<&str> = inner.iter().map(|s| s.as_ref()).collect();
+                format!("Tuple({})", strs.join(", ")).into()
+            }
         }
     }
 
@@ -500,4 +512,31 @@ fn test_nullable_nothing_display() {
         format!("{}", SqlType::Nullable(&SqlType::Nothing)),
         "Nullable(Nothing)"
     );
+}
+
+#[test]
+fn test_int256_display() {
+    assert_eq!(format!("{}", SqlType::Int256), "Int256");
+}
+
+#[test]
+fn test_uint256_display() {
+    assert_eq!(format!("{}", SqlType::UInt256), "UInt256");
+}
+
+#[test]
+fn test_date32_display() {
+    assert_eq!(format!("{}", SqlType::Date32), "Date32");
+}
+
+#[test]
+fn test_tuple_display() {
+    let t = SqlType::Tuple(vec![&SqlType::UInt8, &SqlType::String]);
+    assert_eq!(format!("{}", t), "Tuple(UInt8, String)");
+}
+
+#[test]
+fn test_nested_tuple_display() {
+    let t = SqlType::Tuple(vec![&SqlType::UInt8, &SqlType::Nullable(&SqlType::Int32)]);
+    assert_eq!(format!("{}", t), "Tuple(UInt8, Nullable(Int32))");
 }

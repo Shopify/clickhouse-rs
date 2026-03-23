@@ -56,6 +56,10 @@ pub enum Value {
         &'static SqlType,
         Arc<HashMap<Value, Value>>,
     ),
+    Int256([u8; 32]),
+    UInt256([u8; 32]),
+    Date32(i32),
+    Tuple(Arc<Vec<Value>>),
 }
 
 impl Hash for Value {
@@ -72,7 +76,10 @@ impl Hash for Value {
             Self::UInt32(i) => i.hash(state),
             Self::UInt64(i) => i.hash(state),
             Self::UInt128(i) => i.hash(state),
+            Self::Int256(i) => i.hash(state),
+            Self::UInt256(i) => i.hash(state),
             Self::Date(d) => d.hash(state),
+            Self::Date32(d) => d.hash(state),
             Self::DateTime(t, _) => t.hash(state),
             Self::DateTime64(t, (prec_a, _)) => (*t, *prec_a).hash(state),
             _ => unimplemented!(),
@@ -118,6 +125,10 @@ impl PartialEq for Value {
             (Value::Ipv4(a), Value::Ipv4(b)) => *a == *b,
             (Value::Ipv6(a), Value::Ipv6(b)) => *a == *b,
             (Value::Uuid(a), Value::Uuid(b)) => *a == *b,
+            (Value::Int256(a), Value::Int256(b)) => *a == *b,
+            (Value::UInt256(a), Value::UInt256(b)) => *a == *b,
+            (Value::Date32(a), Value::Date32(b)) => *a == *b,
+            (Value::Tuple(a), Value::Tuple(b)) => *a == *b,
             (Value::DateTime64(a, (prec_a, tz_a)), Value::DateTime64(b, (prec_b, tz_b))) => {
                 // chrono has no "variable-precision" offset method. As a
                 // fallback, we always use `timestamp_nanos` and multiply by
@@ -188,6 +199,13 @@ impl Value {
             SqlType::Enum16(values) => Value::Enum16(values, Enum16(0)),
             SqlType::Map(k, v) => Value::Map(k, v, Arc::new(HashMap::default())),
             SqlType::Nothing => Value::Nullable(Either::Left(&SqlType::Nothing)),
+            SqlType::Int256 => Value::Int256([0; 32]),
+            SqlType::UInt256 => Value::UInt256([0; 32]),
+            SqlType::Date32 => Value::Date32(0),
+            SqlType::Tuple(ref types) => {
+                let values: Vec<Value> = types.iter().map(|t| Value::default((*t).clone())).collect();
+                Value::Tuple(Arc::new(values))
+            }
         }
     }
 }
@@ -273,6 +291,18 @@ impl fmt::Display for Value {
                     .collect();
                 write!(f, "[{}]", cells.join(", "))
             }
+            Value::Int256(ref v) => write!(f, "{:?}", v),
+            Value::UInt256(ref v) => write!(f, "{:?}", v),
+            Value::Date32(ref v) => {
+                let date = NaiveDate::from_ymd_opt(1970, 1, 1)
+                    .map(|unix_epoch| unix_epoch + Duration::days(i64::from(*v)))
+                    .unwrap();
+                fmt::Display::fmt(&date.format("%Y-%m-%d"), f)
+            }
+            Value::Tuple(ref vs) => {
+                let cells: Vec<String> = vs.iter().map(|v| format!("{v}")).collect();
+                write!(f, "({})", cells.join(", "))
+            }
         }
     }
 }
@@ -316,6 +346,17 @@ impl From<Value> for SqlType {
                 SqlType::DateTime(DateTimeType::DateTime64(precision, tz))
             }
             Value::Map(k, v, _) => SqlType::Map(k, v),
+            Value::Int256(_) => SqlType::Int256,
+            Value::UInt256(_) => SqlType::UInt256,
+            Value::Date32(_) => SqlType::Date32,
+            Value::Tuple(ref vs) => {
+                let types: Vec<&'static SqlType> = vs.iter().map(|v| {
+                    let sql_type = SqlType::from(v.clone());
+                    let static_ref: &'static SqlType = sql_type.into();
+                    static_ref
+                }).collect();
+                SqlType::Tuple(types)
+            }
         }
     }
 }
