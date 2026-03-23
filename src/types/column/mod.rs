@@ -47,6 +47,7 @@ pub mod iter;
 mod list;
 mod low_cardinality;
 mod map;
+mod nothing;
 mod nullable;
 mod numeric;
 mod simple_agg_func;

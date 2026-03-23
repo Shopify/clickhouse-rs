@@ -25,6 +25,7 @@ use crate::{
             list::List,
             low_cardinality::LowCardinalityColumnData,
             map::MapColumnData,
+            nothing::NothingColumnData,
             nullable::NullableColumnData,
             numeric::VectorColumnData,
             simple_agg_func::SimpleAggregateFunctionColumnData,
@@ -80,6 +81,7 @@ impl dyn ColumnData {
             "IPv4" => W::wrap(IpColumnData::<Ipv4>::load(reader, size)?),
             "IPv6" => W::wrap(IpColumnData::<Ipv6>::load(reader, size)?),
             "UUID" => W::wrap(IpColumnData::<Uuid>::load(reader, size)?),
+            "Nothing" => W::wrap(NothingColumnData::load(reader, size)?),
             _ => {
                 if let Some(inner_type) = parse_nullable_type(type_name) {
                     W::wrap(NullableColumnData::load(reader, inner_type, size, tz)?)
@@ -239,6 +241,7 @@ impl dyn ColumnData {
                                                                                  // }
                 )
             }
+            SqlType::Nothing => W::wrap(NothingColumnData::with_capacity(capacity)),
         })
     }
 }

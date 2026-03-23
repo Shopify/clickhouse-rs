@@ -187,6 +187,7 @@ impl Value {
             SqlType::Enum8(values) => Value::Enum8(values, Enum8(0)),
             SqlType::Enum16(values) => Value::Enum16(values, Enum16(0)),
             SqlType::Map(k, v) => Value::Map(k, v, Arc::new(HashMap::default())),
+            SqlType::Nothing => Value::Nullable(Either::Left(&SqlType::Nothing)),
         }
     }
 }
