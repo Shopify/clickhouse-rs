@@ -488,3 +488,16 @@ fn test_to_string() {
     let actual = SqlType::Nullable(&SqlType::UInt8).to_string();
     assert_eq!(expected, actual)
 }
+
+#[test]
+fn test_nothing_display() {
+    assert_eq!(format!("{}", SqlType::Nothing), "Nothing");
+}
+
+#[test]
+fn test_nullable_nothing_display() {
+    assert_eq!(
+        format!("{}", SqlType::Nullable(&SqlType::Nothing)),
+        "Nullable(Nothing)"
+    );
+}

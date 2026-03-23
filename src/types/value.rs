@@ -851,4 +851,13 @@ mod test {
         assert_eq!(block.row_count(), 1);
         assert_eq!(block.column_count(), 9);
     }
+
+    #[test]
+    fn test_default_nothing() {
+        let value = Value::default(SqlType::Nothing);
+        match value {
+            Value::Nullable(either) => assert!(either.is_left()),
+            other => panic!("Expected Nullable(Left(...)), got {:?}", other),
+        }
+    }
 }

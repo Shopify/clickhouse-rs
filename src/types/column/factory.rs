@@ -778,4 +778,60 @@ mod test {
             Some("String")
         );
     }
+
+    #[test]
+    fn test_load_nothing_column() {
+        let mut cursor = std::io::Cursor::new(Vec::<u8>::new());
+        let tz: Tz = "UTC".parse().unwrap();
+        let column = <dyn ColumnData>::load_data::<ArcColumnWrapper, _>(
+            &mut cursor,
+            "Nothing",
+            3,
+            tz,
+        )
+        .unwrap();
+        assert_eq!(column.len(), 3);
+        assert_eq!(column.sql_type(), SqlType::Nothing);
+    }
+
+    #[test]
+    fn test_load_nullable_nothing_column() {
+        use crate::types::ValueRef;
+        // Nullable(Nothing) has 3 rows, all null: null bitmap = [1, 1, 1], inner = Nothing (0 bytes)
+        let data: Vec<u8> = vec![1, 1, 1];
+        let mut cursor = std::io::Cursor::new(data);
+        let tz: Tz = "UTC".parse().unwrap();
+        let column = <dyn ColumnData>::load_data::<ArcColumnWrapper, _>(
+            &mut cursor,
+            "Nullable(Nothing)",
+            3,
+            tz,
+        )
+        .unwrap();
+        assert_eq!(column.len(), 3);
+        assert_eq!(
+            column.sql_type(),
+            SqlType::Nullable(&SqlType::Nothing)
+        );
+        // All values should be null
+        for i in 0..3 {
+            match column.at(i) {
+                ValueRef::Nullable(either) => assert!(either.is_left()),
+                other => panic!("Expected Nullable, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn test_nothing_from_type() {
+        let tz: Tz = "UTC".parse().unwrap();
+        let column = <dyn ColumnData>::from_type::<ArcColumnWrapper>(
+            SqlType::Nothing,
+            tz,
+            5,
+        )
+        .unwrap();
+        assert_eq!(column.sql_type(), SqlType::Nothing);
+        assert_eq!(column.len(), 0);
+    }
 }
