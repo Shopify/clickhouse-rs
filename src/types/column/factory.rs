@@ -559,6 +559,7 @@ fn parse_low_cardinality(source: &str) -> Option<&str> {
 }
 
 /// Parse a Tuple type string like "Tuple(UInt8, String, Nullable(Int32))"
+/// Also handles named tuples like "Tuple(a UInt8, b String)" by stripping names.
 /// Returns a vector of the inner type name strings.
 fn parse_tuple_type(source: &str) -> Option<Vec<&str>> {
     let trimmed = source.trim();
@@ -576,7 +577,7 @@ fn parse_tuple_type(source: &str) -> Option<Vec<&str>> {
             '(' => depth += 1,
             ')' => depth -= 1,
             ',' if depth == 0 => {
-                let t = inner[start..i].trim();
+                let t = strip_tuple_element_name(inner[start..i].trim());
                 if !t.is_empty() {
                     types.push(t);
                 }
@@ -587,16 +588,41 @@ fn parse_tuple_type(source: &str) -> Option<Vec<&str>> {
     }
 
     // Last element
-    let t = inner[start..].trim();
+    let t = strip_tuple_element_name(inner[start..].trim());
     if !t.is_empty() {
         types.push(t);
     }
 
     if types.is_empty() {
+        // Empty Tuple() is valid in ClickHouse but not currently supported.
+        // Returns None to surface an 'unsupported type' error from load_data.
         None
     } else {
         Some(types)
     }
+}
+
+/// Strip optional element name from a named tuple element.
+/// e.g. "a UInt8" -> "UInt8", "Nullable(Int32)" -> "Nullable(Int32)"
+fn strip_tuple_element_name(element: &str) -> &str {
+    // Named elements have the form "name Type" where name is an identifier
+    // and Type starts with an uppercase letter or is a known type.
+    // We detect this by finding a space that's not inside parentheses.
+    let mut depth = 0;
+    for (i, ch) in element.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ' ' if depth == 0 => {
+                let rest = element[i + 1..].trim();
+                if !rest.is_empty() {
+                    return rest;
+                }
+            }
+            _ => {}
+        }
+    }
+    element
 }
 
 fn get_timezone(timezone: &Option<String>, tz: Tz) -> Result<Tz> {
@@ -961,8 +987,29 @@ mod test {
     }
 
     #[test]
+    fn test_parse_tuple_type_named() {
+        assert_eq!(
+            parse_tuple_type("Tuple(a UInt8, b String)"),
+            Some(vec!["UInt8", "String"])
+        );
+    }
+
+    #[test]
+    fn test_parse_tuple_type_named_nested() {
+        assert_eq!(
+            parse_tuple_type("Tuple(id UInt64, name Nullable(String))"),
+            Some(vec!["UInt64", "Nullable(String)"])
+        );
+    }
+
+    #[test]
     fn test_parse_tuple_type_not_tuple() {
         assert_eq!(parse_tuple_type("Array(UInt8)"), None);
+    }
+
+    #[test]
+    fn test_parse_tuple_type_empty() {
+        assert_eq!(parse_tuple_type("Tuple()"), None);
     }
 
     #[test]

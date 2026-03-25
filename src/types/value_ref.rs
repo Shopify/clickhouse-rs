@@ -76,6 +76,7 @@ impl<'a> Hash for ValueRef<'a> {
             Self::Int256(i) => i.hash(state),
             Self::UInt256(i) => i.hash(state),
             Self::Date32(d) => d.hash(state),
+            Self::Tuple(ref vs) => vs.hash(state),
             _ => unimplemented!(),
         }
     }
@@ -213,9 +214,11 @@ impl<'a> fmt::Display for ValueRef<'a> {
             ValueRef::UInt256(v) => write!(f, "{:?}", v),
             ValueRef::Date32(v) => {
                 let date = NaiveDate::from_ymd_opt(1970, 1, 1)
-                    .map(|unix_epoch| unix_epoch + Duration::days(i64::from(*v)))
-                    .unwrap();
-                fmt::Display::fmt(&date.format("%Y-%m-%d"), f)
+                    .and_then(|epoch| epoch.checked_add_signed(Duration::days(i64::from(*v))));
+                match date {
+                    Some(d) => fmt::Display::fmt(&d.format("%Y-%m-%d"), f),
+                    None => write!(f, "Date32({})", v),
+                }
             }
             ValueRef::Tuple(ref vs) => {
                 let cells: Vec<String> = vs.iter().map(|v| format!("{v}")).collect();

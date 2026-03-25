@@ -82,6 +82,7 @@ impl Hash for Value {
             Self::Date32(d) => d.hash(state),
             Self::DateTime(t, _) => t.hash(state),
             Self::DateTime64(t, (prec_a, _)) => (*t, *prec_a).hash(state),
+            Self::Tuple(ref vs) => vs.hash(state),
             _ => unimplemented!(),
         }
     }
@@ -295,9 +296,11 @@ impl fmt::Display for Value {
             Value::UInt256(ref v) => write!(f, "{:?}", v),
             Value::Date32(ref v) => {
                 let date = NaiveDate::from_ymd_opt(1970, 1, 1)
-                    .map(|unix_epoch| unix_epoch + Duration::days(i64::from(*v)))
-                    .unwrap();
-                fmt::Display::fmt(&date.format("%Y-%m-%d"), f)
+                    .and_then(|epoch| epoch.checked_add_signed(Duration::days(i64::from(*v))));
+                match date {
+                    Some(d) => fmt::Display::fmt(&d.format("%Y-%m-%d"), f),
+                    None => write!(f, "Date32({})", v),
+                }
             }
             Value::Tuple(ref vs) => {
                 let cells: Vec<String> = vs.iter().map(|v| format!("{v}")).collect();
