@@ -8,10 +8,15 @@ use crate::{
 
 use super::column_data::{BoxColumnData, ColumnData};
 
-/// Column data for ClickHouse's `Nothing` type.
+/// Column data for ClickHouse's `Nothing` type: zero bytes per row, used almost
+/// exclusively inside `Nullable(Nothing)` for all-NULL columns.
 ///
-/// The `Nothing` type has no values and zero bytes per row.
-/// It is primarily used as `Nullable(Nothing)` to represent columns of all NULLs.
+/// Design note: since there's no `ValueRef::Nothing` variant, `at()` returns a
+/// Nullable sentinel (`Nullable(Left(&SqlType::Nothing))`). This means standalone
+/// Nothing columns have slightly unusual semantics — the `SqlType::Nothing` →
+/// `Value::default()` → `SqlType::from()` roundtrip produces `Nullable(Nothing)`
+/// instead of `Nothing`. This is an acceptable tradeoff given the type's narrow
+/// real-world use case (always wrapped in Nullable).
 pub(crate) struct NothingColumnData {
     pub(crate) len: usize,
 }
@@ -44,7 +49,8 @@ impl ColumnData for NothingColumnData {
         self.len += 1;
     }
 
-    fn at(&self, _index: usize) -> ValueRef {
+    fn at(&self, index: usize) -> ValueRef {
+        assert!(index < self.len, "index out of bounds: {} >= {}", index, self.len);
         ValueRef::Nullable(either::Either::Left(&SqlType::Nothing))
     }
 
