@@ -53,6 +53,10 @@ pub enum ValueRef<'a> {
         &'static SqlType,
         Arc<HashMap<ValueRef<'a>, ValueRef<'a>>>,
     ),
+    Int256([u8; 32]),
+    UInt256([u8; 32]),
+    Date32(i32),
+    Tuple(Arc<Vec<ValueRef<'a>>>),
 }
 
 impl<'a> Hash for ValueRef<'a> {
@@ -69,6 +73,10 @@ impl<'a> Hash for ValueRef<'a> {
             Self::UInt32(i) => i.hash(state),
             Self::UInt64(i) => i.hash(state),
             Self::UInt128(i) => i.hash(state),
+            Self::Int256(i) => i.hash(state),
+            Self::UInt256(i) => i.hash(state),
+            Self::Date32(d) => d.hash(state),
+            Self::Tuple(ref vs) => vs.hash(state),
             _ => unimplemented!(),
         }
     }
@@ -118,6 +126,10 @@ impl<'a> PartialEq for ValueRef<'a> {
                 }
                 map1 == map2
             }
+            (ValueRef::Int256(a), ValueRef::Int256(b)) => *a == *b,
+            (ValueRef::UInt256(a), ValueRef::UInt256(b)) => *a == *b,
+            (ValueRef::Date32(a), ValueRef::Date32(b)) => *a == *b,
+            (ValueRef::Tuple(a), ValueRef::Tuple(b)) => *a == *b,
             _ => false,
         }
     }
@@ -198,6 +210,20 @@ impl<'a> fmt::Display for ValueRef<'a> {
                 let cells: Vec<String> = vs.iter().map(|v| format!("{}-{}", v.0, v.1)).collect();
                 write!(f, "[{}]", cells.join(", "))
             }
+            ValueRef::Int256(v) => write!(f, "{:?}", v),
+            ValueRef::UInt256(v) => write!(f, "{:?}", v),
+            ValueRef::Date32(v) => {
+                let date = NaiveDate::from_ymd_opt(1970, 1, 1)
+                    .and_then(|epoch| epoch.checked_add_signed(Duration::days(i64::from(*v))));
+                match date {
+                    Some(d) => fmt::Display::fmt(&d.format("%Y-%m-%d"), f),
+                    None => write!(f, "Date32({})", v),
+                }
+            }
+            ValueRef::Tuple(ref vs) => {
+                let cells: Vec<String> = vs.iter().map(|v| format!("{v}")).collect();
+                write!(f, "({})", cells.join(", "))
+            }
         }
     }
 }
@@ -237,6 +263,17 @@ impl<'a> From<ValueRef<'a>> for SqlType {
                 SqlType::DateTime(DateTimeType::DateTime64(*precision, *tz))
             }
             ValueRef::Map(k, v, _) => SqlType::Map(k, v),
+            ValueRef::Int256(_) => SqlType::Int256,
+            ValueRef::UInt256(_) => SqlType::UInt256,
+            ValueRef::Date32(_) => SqlType::Date32,
+            ValueRef::Tuple(ref vs) => {
+                let types: Vec<&'static SqlType> = vs.iter().map(|v| {
+                    let sql_type = SqlType::from(v.clone());
+                    let static_ref: &'static SqlType = sql_type.into();
+                    static_ref
+                }).collect();
+                SqlType::Tuple(types)
+            }
         }
     }
 }
@@ -319,6 +356,13 @@ impl<'a> From<ValueRef<'a>> for Value {
                     value_list.insert(key, value);
                 }
                 Value::Map(k, v, Arc::new(value_list))
+            }
+            ValueRef::Int256(v) => Value::Int256(v),
+            ValueRef::UInt256(v) => Value::UInt256(v),
+            ValueRef::Date32(v) => Value::Date32(v),
+            ValueRef::Tuple(vs) => {
+                let value_list: Vec<Value> = vs.iter().map(|v| v.clone().into()).collect();
+                Value::Tuple(Arc::new(value_list))
             }
         }
     }
@@ -417,6 +461,13 @@ impl<'a> From<&'a Value> for ValueRef<'a> {
                     ref_map.insert(key_ref, value_ref);
                 }
                 ValueRef::Map(k, v, Arc::new(ref_map))
+            }
+            Value::Int256(v) => ValueRef::Int256(*v),
+            Value::UInt256(v) => ValueRef::UInt256(*v),
+            Value::Date32(v) => ValueRef::Date32(*v),
+            Value::Tuple(vs) => {
+                let ref_vec: Vec<ValueRef<'a>> = vs.iter().map(|v| From::from(v)).collect();
+                ValueRef::Tuple(Arc::new(ref_vec))
             }
         }
     }

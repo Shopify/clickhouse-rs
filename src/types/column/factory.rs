@@ -25,10 +25,14 @@ use crate::{
             list::List,
             low_cardinality::LowCardinalityColumnData,
             map::MapColumnData,
+            bigint::{Int256ColumnData, UInt256ColumnData},
+            date32::Date32ColumnData,
+            nothing::NothingColumnData,
             nullable::NullableColumnData,
             numeric::VectorColumnData,
             simple_agg_func::SimpleAggregateFunctionColumnData,
             string::StringColumnData,
+            tuple::TupleColumnData,
             ArcColumnWrapper, BoxColumnWrapper, ColumnWrapper,
         },
         decimal::NoBits,
@@ -80,6 +84,10 @@ impl dyn ColumnData {
             "IPv4" => W::wrap(IpColumnData::<Ipv4>::load(reader, size)?),
             "IPv6" => W::wrap(IpColumnData::<Ipv6>::load(reader, size)?),
             "UUID" => W::wrap(IpColumnData::<Uuid>::load(reader, size)?),
+            "Nothing" => W::wrap(NothingColumnData::load(reader, size)?),
+            "Int256" => W::wrap(Int256ColumnData::load(reader, size)?),
+            "UInt256" => W::wrap(UInt256ColumnData::load(reader, size)?),
+            "Date32" => W::wrap(Date32ColumnData::load(reader, size)?),
             _ => {
                 if let Some(inner_type) = parse_nullable_type(type_name) {
                     W::wrap(NullableColumnData::load(reader, inner_type, size, tz)?)
@@ -107,6 +115,8 @@ impl dyn ColumnData {
                     W::wrap(SimpleAggregateFunctionColumnData::load(reader, func, inner_type, size, tz)?)
                 } else if let Some(inner_type) = parse_low_cardinality(type_name) {
                     W::wrap(LowCardinalityColumnData::load(reader, inner_type, size, tz)?)
+                } else if let Some(inner_types) = parse_tuple_type(type_name) {
+                    W::wrap(TupleColumnData::load(reader, inner_types, size, tz)?)
                 } else {
                     let message = format!("Unsupported column type \"{type_name}\".");
                     return Err(message.into());
@@ -238,6 +248,13 @@ impl dyn ColumnData {
                                                                                  //     value_map: None,
                                                                                  // }
                 )
+            }
+            SqlType::Nothing => W::wrap(NothingColumnData::with_capacity(capacity)),
+            SqlType::Int256 => W::wrap(Int256ColumnData::with_capacity(capacity)),
+            SqlType::UInt256 => W::wrap(UInt256ColumnData::with_capacity(capacity)),
+            SqlType::Date32 => W::wrap(Date32ColumnData::with_capacity(capacity)),
+            SqlType::Tuple(ref types) => {
+                W::wrap(TupleColumnData::with_capacity(types, timezone, capacity)?)
             }
         })
     }
@@ -541,6 +558,73 @@ fn parse_low_cardinality(source: &str) -> Option<&str> {
     Some(source[lo + 1..hi].trim())
 }
 
+/// Parse a Tuple type string like "Tuple(UInt8, String, Nullable(Int32))"
+/// Also handles named tuples like "Tuple(a UInt8, b String)" by stripping names.
+/// Returns a vector of the inner type name strings.
+fn parse_tuple_type(source: &str) -> Option<Vec<&str>> {
+    let trimmed = source.trim();
+    if !trimmed.starts_with("Tuple(") || !trimmed.ends_with(')') {
+        return None;
+    }
+
+    let inner = &trimmed[6..trimmed.len() - 1];
+    let mut types = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+
+    for (i, ch) in inner.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                let t = strip_tuple_element_name(inner[start..i].trim());
+                if !t.is_empty() {
+                    types.push(t);
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+
+    // Last element
+    let t = strip_tuple_element_name(inner[start..].trim());
+    if !t.is_empty() {
+        types.push(t);
+    }
+
+    if types.is_empty() {
+        // Empty Tuple() is valid in ClickHouse but not currently supported.
+        // Returns None to surface an 'unsupported type' error from load_data.
+        None
+    } else {
+        Some(types)
+    }
+}
+
+/// Strip optional element name from a named tuple element.
+/// e.g. "a UInt8" -> "UInt8", "Nullable(Int32)" -> "Nullable(Int32)"
+fn strip_tuple_element_name(element: &str) -> &str {
+    // Named elements have the form "name Type" where name is an identifier
+    // and Type starts with an uppercase letter or is a known type.
+    // We detect this by finding a space that's not inside parentheses.
+    let mut depth = 0;
+    for (i, ch) in element.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ' ' if depth == 0 => {
+                let rest = element[i + 1..].trim();
+                if !rest.is_empty() {
+                    return rest;
+                }
+            }
+            _ => {}
+        }
+    }
+    element
+}
+
 fn get_timezone(timezone: &Option<String>, tz: Tz) -> Result<Tz> {
     match timezone {
         None => Ok(tz),
@@ -773,6 +857,230 @@ mod test {
         assert_eq!(
             parse_low_cardinality("LowCardinality ( String )"),
             Some("String")
+        );
+    }
+
+    #[test]
+    fn test_load_nothing_column() {
+        let mut cursor = std::io::Cursor::new(Vec::<u8>::new());
+        let tz: Tz = "UTC".parse().unwrap();
+        let column = <dyn ColumnData>::load_data::<ArcColumnWrapper, _>(
+            &mut cursor,
+            "Nothing",
+            3,
+            tz,
+        )
+        .unwrap();
+        assert_eq!(column.len(), 3);
+        assert_eq!(column.sql_type(), SqlType::Nothing);
+    }
+
+    #[test]
+    fn test_load_nullable_nothing_column() {
+        use crate::types::ValueRef;
+        // Nullable(Nothing) has 3 rows, all null: null bitmap = [1, 1, 1], inner = Nothing (0 bytes)
+        let data: Vec<u8> = vec![1, 1, 1];
+        let mut cursor = std::io::Cursor::new(data);
+        let tz: Tz = "UTC".parse().unwrap();
+        let column = <dyn ColumnData>::load_data::<ArcColumnWrapper, _>(
+            &mut cursor,
+            "Nullable(Nothing)",
+            3,
+            tz,
+        )
+        .unwrap();
+        assert_eq!(column.len(), 3);
+        assert_eq!(
+            column.sql_type(),
+            SqlType::Nullable(&SqlType::Nothing)
+        );
+        // All values should be null
+        for i in 0..3 {
+            match column.at(i) {
+                ValueRef::Nullable(either) => assert!(either.is_left()),
+                other => panic!("Expected Nullable, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn test_nothing_from_type() {
+        let tz: Tz = "UTC".parse().unwrap();
+        let column = <dyn ColumnData>::from_type::<ArcColumnWrapper>(
+            SqlType::Nothing,
+            tz,
+            5,
+        )
+        .unwrap();
+        assert_eq!(column.sql_type(), SqlType::Nothing);
+        assert_eq!(column.len(), 0);
+    }
+
+    #[test]
+    fn test_load_int256_column() {
+        use crate::types::ValueRef;
+        // 2 rows of Int256, each 32 bytes (little-endian)
+        let mut data = vec![0u8; 64];
+        data[0] = 42; // first value = 42
+        data[32] = 7; // second value = 7
+        let mut cursor = std::io::Cursor::new(data);
+        let tz: Tz = "UTC".parse().unwrap();
+        let column = <dyn ColumnData>::load_data::<ArcColumnWrapper, _>(
+            &mut cursor, "Int256", 2, tz,
+        ).unwrap();
+        assert_eq!(column.len(), 2);
+        assert_eq!(column.sql_type(), SqlType::Int256);
+        if let ValueRef::Int256(bytes) = column.at(0) {
+            assert_eq!(bytes[0], 42);
+        } else {
+            panic!("Expected Int256");
+        }
+    }
+
+    #[test]
+    fn test_load_uint256_column() {
+        let mut data = vec![0u8; 32];
+        data[0] = 255;
+        let mut cursor = std::io::Cursor::new(data);
+        let tz: Tz = "UTC".parse().unwrap();
+        let column = <dyn ColumnData>::load_data::<ArcColumnWrapper, _>(
+            &mut cursor, "UInt256", 1, tz,
+        ).unwrap();
+        assert_eq!(column.len(), 1);
+        assert_eq!(column.sql_type(), SqlType::UInt256);
+    }
+
+    #[test]
+    fn test_load_date32_column() {
+        use crate::types::ValueRef;
+        // Date32 is i32 little-endian. 19000 days from epoch ≈ 2022-01-06
+        let days: i32 = 19000;
+        let data = days.to_le_bytes().to_vec();
+        let mut cursor = std::io::Cursor::new(data);
+        let tz: Tz = "UTC".parse().unwrap();
+        let column = <dyn ColumnData>::load_data::<ArcColumnWrapper, _>(
+            &mut cursor, "Date32", 1, tz,
+        ).unwrap();
+        assert_eq!(column.len(), 1);
+        assert_eq!(column.sql_type(), SqlType::Date32);
+        if let ValueRef::Date32(v) = column.at(0) {
+            assert_eq!(v, 19000);
+        } else {
+            panic!("Expected Date32");
+        }
+    }
+
+    #[test]
+    fn test_parse_tuple_type_simple() {
+        assert_eq!(
+            parse_tuple_type("Tuple(UInt8, String)"),
+            Some(vec!["UInt8", "String"])
+        );
+    }
+
+    #[test]
+    fn test_parse_tuple_type_nested() {
+        assert_eq!(
+            parse_tuple_type("Tuple(UInt8, Nullable(Int32), Array(String))"),
+            Some(vec!["UInt8", "Nullable(Int32)", "Array(String)"])
+        );
+    }
+
+    #[test]
+    fn test_parse_tuple_type_named() {
+        assert_eq!(
+            parse_tuple_type("Tuple(a UInt8, b String)"),
+            Some(vec!["UInt8", "String"])
+        );
+    }
+
+    #[test]
+    fn test_parse_tuple_type_named_nested() {
+        assert_eq!(
+            parse_tuple_type("Tuple(id UInt64, name Nullable(String))"),
+            Some(vec!["UInt64", "Nullable(String)"])
+        );
+    }
+
+    #[test]
+    fn test_parse_tuple_type_not_tuple() {
+        assert_eq!(parse_tuple_type("Array(UInt8)"), None);
+    }
+
+    #[test]
+    fn test_parse_tuple_type_empty() {
+        assert_eq!(parse_tuple_type("Tuple()"), None);
+    }
+
+    #[test]
+    fn test_load_tuple_column() {
+        use crate::types::ValueRef;
+        // Tuple(UInt8, UInt8) with 2 rows
+        // Column 1 (UInt8): [10, 20]
+        // Column 2 (UInt8): [30, 40]
+        let data: Vec<u8> = vec![10, 20, 30, 40];
+        let mut cursor = std::io::Cursor::new(data);
+        let tz: Tz = "UTC".parse().unwrap();
+        let column = <dyn ColumnData>::load_data::<ArcColumnWrapper, _>(
+            &mut cursor, "Tuple(UInt8, UInt8)", 2, tz,
+        ).unwrap();
+        assert_eq!(column.len(), 2);
+
+        // First row: (10, 30)
+        if let ValueRef::Tuple(vs) = column.at(0) {
+            assert_eq!(vs.len(), 2);
+            assert_eq!(vs[0], ValueRef::UInt8(10));
+            assert_eq!(vs[1], ValueRef::UInt8(30));
+        } else {
+            panic!("Expected Tuple");
+        }
+
+        // Second row: (20, 40)
+        if let ValueRef::Tuple(vs) = column.at(1) {
+            assert_eq!(vs[0], ValueRef::UInt8(20));
+            assert_eq!(vs[1], ValueRef::UInt8(40));
+        } else {
+            panic!("Expected Tuple");
+        }
+    }
+
+    #[test]
+    fn test_int256_from_type() {
+        let tz: Tz = "UTC".parse().unwrap();
+        let column = <dyn ColumnData>::from_type::<ArcColumnWrapper>(
+            SqlType::Int256, tz, 5,
+        ).unwrap();
+        assert_eq!(column.sql_type(), SqlType::Int256);
+    }
+
+    #[test]
+    fn test_uint256_from_type() {
+        let tz: Tz = "UTC".parse().unwrap();
+        let column = <dyn ColumnData>::from_type::<ArcColumnWrapper>(
+            SqlType::UInt256, tz, 5,
+        ).unwrap();
+        assert_eq!(column.sql_type(), SqlType::UInt256);
+    }
+
+    #[test]
+    fn test_date32_from_type() {
+        let tz: Tz = "UTC".parse().unwrap();
+        let column = <dyn ColumnData>::from_type::<ArcColumnWrapper>(
+            SqlType::Date32, tz, 5,
+        ).unwrap();
+        assert_eq!(column.sql_type(), SqlType::Date32);
+    }
+
+    #[test]
+    fn test_tuple_from_type() {
+        let tz: Tz = "UTC".parse().unwrap();
+        let types: Vec<&'static SqlType> = vec![&SqlType::UInt8, &SqlType::String];
+        let column = <dyn ColumnData>::from_type::<ArcColumnWrapper>(
+            SqlType::Tuple(types), tz, 5,
+        ).unwrap();
+        assert_eq!(
+            column.sql_type(),
+            SqlType::Tuple(vec![&SqlType::UInt8, &SqlType::String])
         );
     }
 }
