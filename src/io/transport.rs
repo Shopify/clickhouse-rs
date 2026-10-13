@@ -18,7 +18,7 @@ use pin_project::pin_project;
 
 use crate::{
     binary::Parser,
-    errors::{DriverError, Error, Result},
+    errors::{ConnectionError, DriverError, Error, Result},
     io::{read_to_end::read_to_end, Stream as InnerStream},
     types::{Block, Cmd, Packet},
 };
@@ -276,7 +276,8 @@ impl PacketStream {
             }
         }
 
-        Ok((h.unwrap(), b))
+        let transport = h.ok_or(Error::Connection(ConnectionError::Broken))?;
+        Ok((transport, b))
     }
 
     pub(crate) fn take_transport(&mut self) -> Option<ClickhouseTransport> {
