@@ -25,6 +25,8 @@ use crate::{
 use futures_core::Stream;
 use futures_util::StreamExt;
 
+const MAX_READ_BUFFER_CAPACITY: usize = 1024 * 1024;
+
 pub(crate) struct TransportInfo {
     pub(crate) timezone: Option<Tz>,
     pub(crate) revision: u64,
@@ -140,6 +142,12 @@ impl<'p> ClickhouseTransportProj<'p> {
                 }
             }
         };
+        let terminal = matches!(
+            &ret,
+            Poll::Ready(Some(Ok(Packet::Eof(_)
+                | Packet::Pong(_)
+                | Packet::Exception(_))))
+        );
 
         match ret {
             Poll::Pending => (),
@@ -149,6 +157,9 @@ impl<'p> ClickhouseTransportProj<'p> {
                 unsafe {
                     ptr::copy(self.rd.as_ptr().add(pos), self.rd.as_mut_ptr(), new_len);
                     self.rd.set_len(new_len);
+                }
+                if terminal && self.rd.capacity() > MAX_READ_BUFFER_CAPACITY {
+                    self.rd.shrink_to_fit();
                 }
             }
         }
